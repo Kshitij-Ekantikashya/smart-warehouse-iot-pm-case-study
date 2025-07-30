@@ -1,0 +1,306 @@
+const express = require('express');
+const bodyParser = require('body-parser');
+const cors = require('cors');
+const { v4: uuidv4 } = require('uuid');
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
+
+const app = express();
+const PORT = 3000;
+const tokens = {};
+
+app.use(cors());
+app.use(bodyParser.json());
+
+// Initialize SQLite
+const dbFile = path.join(__dirname, 'warehouse.db');
+const db = new sqlite3.Database(dbFile, err => {
+  if (err) {
+    console.error('DB open error:', err);
+    process.exit(1);
+  }
+  console.log('✅ Connected to SQLite database.');
+
+  db.serialize(() => {
+    db.run(`
+      CREATE TABLE IF NOT EXISTS readings (
+        ts           TEXT PRIMARY KEY,
+        type         TEXT,
+        temp         REAL,
+        hum          REAL,
+        gas          REAL,
+        fire         BOOLEAN,
+        methane      BOOLEAN,
+        dist_space   REAL,
+        dist_stack   REAL,
+        space_pct    REAL,
+        stack_pct    REAL,
+        uid          TEXT,
+        dir          TEXT,
+        alarm        BOOLEAN
+      )
+    `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS users (
+        id           INTEGER PRIMARY KEY AUTOINCREMENT,
+        username     TEXT UNIQUE NOT NULL,
+        password     TEXT NOT NULL,
+        rfid_tag     TEXT UNIQUE
+      )
+    `);
+
+    db.run(`
+      CREATE TABLE IF NOT EXISTS rfid_logs (
+        ts        TEXT PRIMARY KEY,
+        tag       TEXT NOT NULL,
+        direction TEXT NOT NULL
+      )
+    `);
+
+    // ✅ Drop and recreate rfid_items to fix old schema
+    db.run(DROP TABLE IF EXISTS rfid_items);
+    db.run(`
+      CREATE TABLE IF NOT EXISTS rfid_items (
+        uid    TEXT PRIMARY KEY,
+        item   TEXT NOT NULL
+      )
+    `);
+
+    // Auto-seed default admin
+    db.get(SELECT * FROM users WHERE username = ?, ['admin'], (err, row) => {
+      if (!row) {
+        db.run(INSERT INTO users(username, password, rfid_tag) VALUES (?, ?, ?),
+          ['admin', 'admin123', null]);
+      }
+    });
+
+    // Auto-seed known RFID UIDs
+    const knownTags = [
+      ['83EB9129', 'Electric Drill (Set 1)'],
+      ['63A14730', 'Electric Drill (Set 2)'],
+      ['C3626E36', 'Welding Gloves'],
+      ['837A4A36', 'Laser Distance Meter'],
+      ['43517236', 'Portable Gas Detector'],
+      ['23459129', 'Safety Helmet'],
+      ['B3932536', 'Industrial Multimeter']
+    ];
+
+    knownTags.forEach(([uid, item]) => {
+      db.run(INSERT OR IGNORE INTO rfid_items(uid, item) VALUES (?, ?), [uid, item]);
+    });
+
+    // Seed test RFID logs
+    const now = new Date().toISOString();
+    const sampleLogs = [
+      { ts: now, tag: '83EB9129', direction: 'in' },
+      { ts: now, tag: '63A14730', direction: 'out' },
+      { ts: now, tag: 'C3626E36', direction: 'in' },
+    ];
+
+    sampleLogs.forEach(({ ts, tag, direction }) => {
+      db.run(
+        INSERT OR IGNORE INTO rfid_logs(ts, tag, direction) VALUES (?, ?, ?),
+
+        [ts, tag, direction]
+      );
+    });
+
+    console.log('✅ Tables ensured and default RFID tags + logs seeded.');
+  });
+});
+
+// Manual login
+app.post('/login', (req, res) => {
+  const { username, password } = req.body;
+  db.get(SELECT * FROM users WHERE username = ? AND password = ?,
+    [username, password],
+    (err, user) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!user) return res.status(401).json({ error: 'Invalid credentials' });
+      const token = uuidv4();
+      tokens[token] = username;
+      res.json({ token });
+    });
+});
+
+// ✅ Sensor ingestion with RFID logging
+app.post('/api/v1/warehouse', (req, res) => {
+  const data = req.body;
+  console.log('📦 New data received:', data);
+
+  const safeTs = data.ts && !isNaN(Date.parse(data.ts)) ? data.ts : new Date().toISOString();
+
+  db.run(`
+    INSERT INTO readings (type, ts, temp, hum, gas, fire, methane, dist_space, dist_stack, space_pct, stack_pct, uid, dir, alarm)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      data.type,
+      safeTs,
+      data.temp ?? null,
+      data.hum ?? null,
+      data.gas ?? null,
+      data.fire ?? null,
+      data.methane ?? null,
+      data.dist_space ?? null,
+      data.dist_stack ?? null,
+      data.space_pct ?? null,
+      data.stack_pct ?? null,
+      data.uid ?? null,
+      data.dir ?? null,
+      !!data.alarm
+    ],
+    err => {
+      if (err) return res.status(500).json({ error: "DB error" });
+
+      // ✅ Also log into rfid_logs if type is inventory
+      if (data.type === 'inventory') {
+        const tag = data.uid || data.tag;
+        const dir = data.dir;
+        if (tag && dir) {
+          db.get(SELECT item FROM rfid_items WHERE uid = ?, [tag], (err, row) => {
+            if (row) {
+              db.run(
+                INSERT INTO rfid_logs(ts, tag, direction) VALUES (?, ?, ?),
+                [safeTs, tag, dir],
+                err => {
+                  if (err) console.error("❌ Failed to insert RFID log:", err.message);
+                  else console.log(✅ RFID log inserted (${tag} - ${dir}));
+                }
+              );
+            } else {
+              console.warn(⚠ UID ${tag} not found in whitelist. Skipped logging.);
+            }
+          });
+        }
+      }
+
+      res.json({ status: "success" });
+    }
+  );
+});
+
+// ✅ Env logs
+app.get('/api/v1/warehouse/logs', (req, res) => {
+  db.all(`
+    SELECT * FROM readings
+    WHERE type = 'env'
+    ORDER BY ts DESC
+    LIMIT 10
+  `, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+// ✅ Latest reading
+app.get('/api/v1/warehouse/latest', (req, res) => {
+  db.get(SELECT * FROM readings ORDER BY ts DESC LIMIT 1,
+    (err, row) => {
+      if (err) return res.status(500).json({ error: err.message });
+      if (!row) return res.status(404).json({ error: 'No readings yet' });
+      res.json({
+  ...row,
+  alarm: !!row.alarm  // ✅ Convert 1 or 0 into proper boolean
+});
+
+    });
+});
+
+// ✅ Manual RFID POST
+app.post('/rfid', (req, res) => {
+  let { tag, direction } = req.body;
+  if (!tag || !direction) return res.status(400).json({ error: 'Missing tag or direction' });
+
+  if (tag.startsWith('0x')) tag = tag.slice(2);
+  const ts = new Date().toISOString();
+
+  db.run(INSERT INTO rfid_logs(ts, tag, direction) VALUES (?, ?, ?),
+    [ts, tag, direction],
+    err => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true, ts, tag, direction });
+    });
+});
+
+// ✅ Last RFID status
+app.get('/rfid/status', (req, res) => {
+  db.get(`
+    SELECT ts, tag AS uid, direction
+    FROM rfid_logs
+    ORDER BY ts DESC
+    LIMIT 1
+  `, (err, row) => {
+    if (err) return res.status(500).json({ error: err.message });
+    if (!row) return res.status(404).json({ error: 'No RFID events yet' });
+    res.json(row);
+  });
+});
+
+// ✅ RFID inventory logs with item name
+app.get('/inventory/logs', (req, res) => {
+  const limit = parseInt(req.query.limit, 10) || 10;
+  const sql = `
+    SELECT r.ts, r.tag AS uid, i.item, r.direction
+    FROM rfid_logs r
+    LEFT JOIN rfid_items i ON r.tag = i.uid
+    ORDER BY r.ts DESC
+    LIMIT ?
+  `;
+  db.all(sql, [limit], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+
+    console.log("🧾 /inventory/logs: Returning", rows.length, "rows");
+    if (rows.length > 0) {
+      console.table(rows);
+    } else {
+      console.log("⚠ No RFID logs found in database.");
+    }
+
+    res.json(rows);
+  });
+});
+
+// ✅ Manage known UID-item mappings
+app.get('/rfid/items', (req, res) => {
+  db.all(SELECT uid, item FROM rfid_items, [], (err, rows) => {
+    if (err) return res.status(500).json({ error: err.message });
+    res.json(rows);
+  });
+});
+
+app.post('/rfid/items', (req, res) => {
+  const { uid, item } = req.body;
+  if (!uid || !item) return res.status(400).json({ error: 'Missing uid or item' });
+
+  db.run(INSERT OR REPLACE INTO rfid_items(uid, item) VALUES (?, ?),
+    [uid, item],
+    err => {
+      if (err) return res.status(500).json({ error: err.message });
+      res.json({ success: true });
+    });
+});
+
+// ✅ Buzzer control
+let buzzerRequested = false;
+
+app.post('/api/v1/warehouse/buzzer', (req, res) => {
+  buzzerRequested = true;
+  res.json({ status: "buzzer triggered" });
+});
+
+app.get('/api/v1/warehouse/buzzer', (req, res) => {
+  const buzzer = buzzerRequested;
+  buzzerRequested = false;
+  res.json({ buzzer });
+});
+
+// Root
+app.get('/', (req, res) => {
+  res.send('🚀 Smart Warehouse API is running!');
+});
+
+// Start
+app.listen(PORT, () => {
+  console.log(🚀 Backend listening on http://localhost:${PORT});
+});
