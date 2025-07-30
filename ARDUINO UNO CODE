@@ -1,219 +1,230 @@
-#include <SPI.h> 
-#include <MFRC522.h> 
-#include <DHT.h> 
-#include <Wire.h> 
-#include <RTClib.h> 
-#include <ArduinoJson.h> 
-// ——— PIN DEFINITIONS ——— 
-#define DHT_PIN    2 
-#define DHT_TYPE   DHT11 
-#define TRIG1      3  
-#define ECHO1      4 
-#define TRIG2      5 
-#define ECHO2      6 
-#define MQ2_PIN    A0 
-#define SS_IN      
-10 
-#define RST_IN     9 
-#define SS_OUT     8 
-#define RST_OUT    7 
-#define BUZZER_PIN A1 
-// ——— GLOBAL OBJECTS ——— 
-DHT dht(DHT_PIN, DHT_TYPE); 
-MFRC522 rfidIn(SS_IN, RST_IN); 
-MFRC522 rfidOut(SS_OUT, RST_OUT); 
-RTC_DS3231 rtc; 
-const int MQ2_FIRE_THRESHOLD    = 400; 
-const int MQ2_METHANE_THRESHOLD = 1000; 
-unsigned long lastEnvMillis = 0; 
-const unsigned long ENV_INTERVAL = 2000; 
-bool buzzerManualState = false; 
-// ——— RFID WHITELISTS ——— 
-const String adminUID = "239E072D"; 
-const String operatorUID = "E3AE0B2D"; 
-bool isLoginTag(String uid) { 
-return (uid == adminUID || uid == operatorUID); 
-} 
-bool isInventoryTag(String uid) { 
-return uid == "83EB9129" || uid == "63A14730" || uid == "C3626E36" || 
-uid == "837A4A36" || uid == "43517236" || uid == "23459129" || 
-uid == "B3932536"; 
-} 
-// ——— SETUP ——— 
-void setup() { 
-Serial.begin(9600); 
-delay(200); 
-Serial.println(F("=== SMART WAREHOUSE UNO INITIALIZING ===")); 
-dht.begin(); 
-delay(500); 
-pinMode(MQ2_PIN, INPUT); 
-delay(3000); 
-pinMode(TRIG1, OUTPUT); pinMode(ECHO1, INPUT);
- pinMode(TRIG2, OUTPUT); pinMode(ECHO2, INPUT); 
-  pinMode(BUZZER_PIN, OUTPUT); 
-  digitalWrite(BUZZER_PIN, LOW); 
- 
-  if (!rtc.begin()) { 
-    Serial.println("RTC not found. Halting."); 
-    while (1); 
-  } 
- 
-  SPI.begin(); 
-  rfidIn.PCD_Init(); 
-  rfidOut.PCD_Init(); 
- 
-  Serial.println(F("=== UNO INIT COMPLETE ===")); 
-} 
- 
-// ——— LOOP ——— 
-void loop() { 
-  unsigned long nowMillis = millis(); 
- 
-  if (Serial.available()) { 
-    String command = Serial.readStringUntil('\n'); 
-    command.trim(); 
- 
-    StaticJsonDocument<128> cmdDoc; 
-    DeserializationError error = deserializeJson(cmdDoc, command); 
-    if (!error && cmdDoc.containsKey("buzzer")) { 
-      buzzerManualState = cmdDoc["buzzer"]; 
-      Serial.print("   Buzzer command received: "); 
-      Serial.println(buzzerManualState ? "ON" : "OFF"); 
-    } else { 
-      if (command == "BUZZER_ON") { 
-        buzzerManualState = true; 
-        Serial.println("   Manual buzzer ON"); 
-      } else if (command == "BUZZER_OFF") { 
-        buzzerManualState = false; 
-        Serial.println("   Manual buzzer OFF"); 
-      } 
-    } 
-  } 
- 
-  if (nowMillis - lastEnvMillis >= ENV_INTERVAL) { 
-    lastEnvMillis = nowMillis; 
-    doEnvironmentCycle(); 
-  } 
- 
-  if (rfidIn.PICC_IsNewCardPresent() && rfidIn.PICC_ReadCardSerial()) { 
-    handleRFID(rfidIn, "in"); 
-    delay(500); 
-  } 
- 
-  if (rfidOut.PICC_IsNewCardPresent() && rfidOut.PICC_ReadCardSerial()) { 
-    handleRFID(rfidOut, "out"); 
-    delay(500); 
-  } 
-} 
- 
-// ——— ENVIRONMENT CYCLE ——— 
-void doEnvironmentCycle() { 
-  float temp = dht.readTemperature(); 
-  float hum  = dht.readHumidity(); 
-  if (isnan(temp) || isnan(hum)) {
-   temp = hum = -1.0; 
-  } 
- 
-  int gasRaw = analogRead(MQ2_PIN); 
-  static int stableGas = gasRaw; 
-  stableGas = (stableGas * 3 + gasRaw) / 4; 
- 
-  bool fireDetected    = stableGas > MQ2_FIRE_THRESHOLD; 
-  bool methaneDetected = stableGas > MQ2_METHANE_THRESHOLD; 
-  bool alarm = fireDetected || methaneDetected; 
- 
-  static bool alarmTriggered = false; 
-  if (alarm && !alarmTriggered) { 
-    alarmTriggered = true; 
-    for (int i = 0; i < 3; i++) { 
-      digitalWrite(BUZZER_PIN, HIGH); 
-      delay(500); 
-      digitalWrite(BUZZER_PIN, LOW); 
-      delay(500); 
-    } 
-  } else if (!alarm) { 
-    alarmTriggered = false; 
-    if (!buzzerManualState) { 
-      digitalWrite(BUZZER_PIN, LOW); 
-    } 
-  } 
- 
-  if (buzzerManualState) { 
-    digitalWrite(BUZZER_PIN, HIGH); 
-  } 
- 
-  long distSpace = measureDistance(TRIG1, ECHO1); 
-  long distStack = measureDistance(TRIG2, ECHO2); 
- 
-  float stack_pct = (distStack < 0) ? -1 : constrain(100.0 * (18.0 - distStack) / 18.0, 0, 100); 
-  float space_pct = (distSpace < 0) ? -1 : constrain(100.0 * distSpace / 28.0, 0, 100); 
- 
-  DateTime t = rtc.now(); 
-  char timeBuf[25]; 
-  sprintf(timeBuf, "%04d-%02d-%02dT%02d:%02d:%02d", 
-          t.year(), t.month(), t.day(), 
-          t.hour(), t.minute(), t.second()); 
- 
-  StaticJsonDocument<256> doc;  
- 
-  doc["type"]       = "env"; 
-  doc["ts"]         = timeBuf; 
-  doc["temp"]       = temp; 
-  doc["hum"]        = hum; 
-  doc["gas"]        = stableGas; 
-  doc["fire"]       = fireDetected; 
-  doc["methane"]    = methaneDetected; 
-  doc["dist_space"] = distSpace; 
-  doc["dist_stack"] = distStack; 
-  doc["space_pct"]  = space_pct; 
-  doc["stack_pct"]  = stack_pct; 
-  doc["alarm"]      = alarm; 
- 
-  String jsonOut; 
-  serializeJson(doc, jsonOut); 
-  Serial.println(jsonOut); 
+#include <SPI.h>
+#include <MFRC522.h>
+#include <DHT.h>
+#include <Wire.h>
+#include <RTClib.h>
+#include <ArduinoJson.h>
+
+// ——— PIN DEFINITIONS ———
+#define DHT_PIN    2
+#define DHT_TYPE   DHT11
+#define TRIG1      3
+#define ECHO1      4
+#define TRIG2      5
+#define ECHO2      6
+#define MQ2_PIN    A0
+#define SS_IN      10
+#define RST_IN     9
+#define SS_OUT     8
+#define RST_OUT    7
+#define BUZZER_PIN A1
+
+// ——— GLOBAL OBJECTS ———
+DHT dht(DHT_PIN, DHT_TYPE);
+MFRC522 rfidIn(SS_IN, RST_IN);
+MFRC522 rfidOut(SS_OUT, RST_OUT);
+RTC_DS3231 rtc;
+
+const int MQ2_FIRE_THRESHOLD    = 400;
+const int MQ2_METHANE_THRESHOLD = 1000;
+
+unsigned long lastEnvMillis = 0;
+const unsigned long ENV_INTERVAL = 2000;
+
+bool buzzerManualState = false;
+
+// ——— RFID WHITELISTS ———
+const String adminUID = "239E072D";
+const String operatorUID = "E3AE0B2D";
+
+bool isLoginTag(String uid) {
+  return (uid == adminUID || uid == operatorUID);
 }
-// ——— RFID HANDLER ——— 
-void handleRFID(MFRC522 &reader, const char* direction) { 
-  char uidHex[9]; 
-  for (byte i = 0; i < 4; i++) { 
-    sprintf(&uidHex[i * 2], "%02X", reader.uid.uidByte[i]); 
-  } 
-  String uid = String(uidHex); 
- 
-  String tagType = "unknown"; 
-  if (isLoginTag(uid)) { 
-    tagType = "login"; 
-  } else if (isInventoryTag(uid)) { 
-    tagType = "inventory"; 
-  } 
- 
-  DateTime t = rtc.now(); 
-  char timeBuf[25]; 
-  sprintf(timeBuf, "%04d-%02d-%02dT%02d:%02d:%02d", 
-          t.year(), t.month(), t.day(), 
-          t.hour(), t.minute(), t.second()); 
- 
-  StaticJsonDocument<256> doc; 
-  doc["type"] = tagType; 
-  doc["ts"]   = timeBuf; 
-  doc["tag"]  = uid;  //    FIXED: was "uid", now "tag" 
-  doc["dir"]  = direction; 
- 
-  String jsonOut;  
-  serializeJson(doc, jsonOut); 
-  Serial.println(jsonOut); 
- 
-  reader.PICC_HaltA(); 
-} 
- 
-// ——— ULTRASONIC DISTANCE ——— 
-long measureDistance(int trigPin, int echoPin) { 
-  digitalWrite(trigPin, LOW); 
-  delayMicroseconds(2); 
-  digitalWrite(trigPin, HIGH); 
-  delayMicroseconds(10); 
-  digitalWrite(trigPin, LOW);     
-  long duration = pulseIn(echoPin, HIGH, 30000UL); 
-  return (duration == 0) ? -1 : duration / 58; 
+
+bool isInventoryTag(String uid) {
+  return uid == "83EB9129" || uid == "63A14730" || uid == "C3626E36" ||
+         uid == "837A4A36" || uid == "43517236" || uid == "23459129" ||
+         uid == "B3932536";
+}
+
+// ——— SETUP ———
+void setup() {
+  Serial.begin(9600);
+  delay(200);
+  Serial.println(F("=== SMART WAREHOUSE UNO INITIALIZING ==="));
+
+  dht.begin();
+  delay(500);
+
+  pinMode(MQ2_PIN, INPUT);
+  delay(3000);
+
+  pinMode(TRIG1, OUTPUT); pinMode(ECHO1, INPUT);
+  pinMode(TRIG2, OUTPUT); pinMode(ECHO2, INPUT);
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
+
+  if (!rtc.begin()) {
+    Serial.println("RTC not found. Halting.");
+    while (1);
+  }
+
+  SPI.begin();
+  rfidIn.PCD_Init();
+  rfidOut.PCD_Init();
+
+  Serial.println(F("=== UNO INIT COMPLETE ==="));
+}
+
+// ——— LOOP ———
+void loop() {
+  unsigned long nowMillis = millis();
+
+  if (Serial.available()) {
+    String command = Serial.readStringUntil('\n');
+    command.trim();
+
+    StaticJsonDocument<128> cmdDoc;
+    DeserializationError error = deserializeJson(cmdDoc, command);
+    if (!error && cmdDoc.containsKey("buzzer")) {
+      buzzerManualState = cmdDoc["buzzer"];
+      Serial.print("✅ Buzzer command received: ");
+      Serial.println(buzzerManualState ? "ON" : "OFF");
+    } else {
+      if (command == "BUZZER_ON") {
+        buzzerManualState = true;
+        Serial.println("✅ Manual buzzer ON");
+      } else if (command == "BUZZER_OFF") {
+        buzzerManualState = false;
+        Serial.println("✅ Manual buzzer OFF");
+      }
+    }
+  }
+
+  if (nowMillis - lastEnvMillis >= ENV_INTERVAL) {
+    lastEnvMillis = nowMillis;
+    doEnvironmentCycle();
+  }
+
+  if (rfidIn.PICC_IsNewCardPresent() && rfidIn.PICC_ReadCardSerial()) {
+    handleRFID(rfidIn, "in");
+    delay(500);
+  }
+
+  if (rfidOut.PICC_IsNewCardPresent() && rfidOut.PICC_ReadCardSerial()) {
+    handleRFID(rfidOut, "out");
+    delay(500);
+  }
+}
+
+// ——— ENVIRONMENT CYCLE ———
+void doEnvironmentCycle() {
+  float temp = dht.readTemperature();
+  float hum  = dht.readHumidity();
+  if (isnan(temp) || isnan(hum)) {
+    temp = hum = -1.0;
+  }
+
+  int gasRaw = analogRead(MQ2_PIN);
+  static int stableGas = gasRaw;
+  stableGas = (stableGas * 3 + gasRaw) / 4;
+
+  bool fireDetected    = stableGas > MQ2_FIRE_THRESHOLD;
+  bool methaneDetected = stableGas > MQ2_METHANE_THRESHOLD;
+  bool alarm = fireDetected || methaneDetected;
+
+  static bool alarmTriggered = false;
+  if (alarm && !alarmTriggered) {
+    alarmTriggered = true;
+    for (int i = 0; i < 3; i++) {
+      digitalWrite(BUZZER_PIN, HIGH);
+      delay(500);
+      digitalWrite(BUZZER_PIN, LOW);
+      delay(500);
+    }
+  } else if (!alarm) {
+    alarmTriggered = false;
+    if (!buzzerManualState) {
+      digitalWrite(BUZZER_PIN, LOW);
+    }
+  }
+
+  if (buzzerManualState) {
+    digitalWrite(BUZZER_PIN, HIGH);
+  }
+
+  long distSpace = measureDistance(TRIG1, ECHO1);
+  long distStack = measureDistance(TRIG2, ECHO2);
+
+  float stack_pct = (distStack < 0) ? -1 : constrain(100.0 * (18.0 - distStack) / 18.0, 0, 100);
+  float space_pct = (distSpace < 0) ? -1 : constrain(100.0 * distSpace / 28.0, 0, 100);
+
+  DateTime t = rtc.now();
+  char timeBuf[25];
+  sprintf(timeBuf, "%04d-%02d-%02dT%02d:%02d:%02d",
+          t.year(), t.month(), t.day(),
+          t.hour(), t.minute(), t.second());
+
+  StaticJsonDocument<256> doc;
+  doc["type"]       = "env";
+  doc["ts"]         = timeBuf;
+  doc["temp"]       = temp;
+  doc["hum"]        = hum;
+  doc["gas"]        = stableGas;
+  doc["fire"]       = fireDetected;
+  doc["methane"]    = methaneDetected;
+  doc["dist_space"] = distSpace;
+  doc["dist_stack"] = distStack;
+  doc["space_pct"]  = space_pct;
+  doc["stack_pct"]  = stack_pct;
+  doc["alarm"]      = alarm;
+
+  String jsonOut;
+  serializeJson(doc, jsonOut);
+  Serial.println(jsonOut);
+}
+
+// ——— RFID HANDLER ———
+void handleRFID(MFRC522 &reader, const char* direction) {
+  char uidHex[9];
+  for (byte i = 0; i < 4; i++) {
+    sprintf(&uidHex[i * 2], "%02X", reader.uid.uidByte[i]);
+  }
+  String uid = String(uidHex);
+
+  String tagType = "unknown";
+  if (isLoginTag(uid)) {
+    tagType = "login";
+  } else if (isInventoryTag(uid)) {
+    tagType = "inventory";
+  }
+
+  DateTime t = rtc.now();
+  char timeBuf[25];
+  sprintf(timeBuf, "%04d-%02d-%02dT%02d:%02d:%02d",
+          t.year(), t.month(), t.day(),
+          t.hour(), t.minute(), t.second());
+
+  StaticJsonDocument<256> doc;
+  doc["type"] = tagType;
+  doc["ts"]   = timeBuf;
+  doc["tag"]  = uid;  // ✅ FIXED: was "uid", now "tag"
+  doc["dir"]  = direction;
+
+  String jsonOut; 
+  serializeJson(doc, jsonOut);
+  Serial.println(jsonOut);
+
+  reader.PICC_HaltA();
+}
+
+// ——— ULTRASONIC DISTANCE ———
+long measureDistance(int trigPin, int echoPin) {
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);    
+  long duration = pulseIn(echoPin, HIGH, 30000UL);
+  return (duration == 0) ? -1 : duration / 58;
 }
