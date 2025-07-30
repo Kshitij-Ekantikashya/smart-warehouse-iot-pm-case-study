@@ -1,0 +1,123 @@
+#include <ESP8266WiFi.h> 
+#include <ESP8266HTTPClient.h> 
+#include <ArduinoJson.h> 
+#include <SoftwareSerial.h> 
+ 
+SoftwareSerial unoSerial(12, 14); // RX from UNO 
+ 
+const char* ssid     = "Kshitij's Galaxy S21 FE"; 
+const char* password = "Kshitij2183"; 
+const char* host     = "192.168.148.211"; // Laptop IP 
+const uint16_t port  = 3000; 
+const char* apiPath  = "/api/v1/warehouse";//    NEW 
+const char* latestPath = "/api/v1/warehouse/buzzer"; 
+const char* apiKey   = "SmartWarehouseApiKey@1"; 
+ 
+unsigned long lastFetchTime = 0; 
+const unsigned long fetchInterval = 2000; 
+ 
+void setup() { 
+  Serial.begin(9600); 
+  unoSerial.begin(9600); 
+  delay(100); 
+ 
+  Serial.print("Connecting to WiFi"); 
+  WiFi.begin(ssid, password); 
+  unsigned long start = millis(); 
+  while (WiFi.status() != WL_CONNECTED) { 
+    delay(500); 
+    Serial.print("."); 
+    if (millis() - start > 10000) { 
+      Serial.println("\nRetrying WiFi"); 
+      WiFi.disconnect(); 
+      WiFi.begin(ssid, password); 
+      start = millis(); 
+    } 
+  } 
+  Serial.println(); 
+  Serial.print("WiFi connected. IP: "); 
+  Serial.println(WiFi.localIP()); 
+} 
+ 
+void loop() { 
+  if (unoSerial.available()) { 
+    String payload = unoSerial.readStringUntil('\n'); 
+    Serial.println("     Received from UNO:"); 
+    Serial.println(payload); 
+ 
+    StaticJsonDocument<256> doc; 
+    DeserializationError error = deserializeJson(doc, payload); 
+    if (error) { 
+      Serial.println("  Invalid JSON from UNO:"); 
+      Serial.println(error.c_str()); 
+      return; 
+    } 
+ 
+    sendJsonToServer(payload); 
+  } 
+ 
+  //    NEW: Periodically fetch /latest and forward buzzer flag if set 
+  if (millis() - lastFetchTime > fetchInterval) { 
+    fetchLatestAndTriggerBuzzer(); 
+    lastFetchTime = millis(); 
+  } 
+} 
+ 
+void sendJsonToServer(const String &payload) { 
+  if (WiFi.status() != WL_CONNECTED) return; 
+ 
+  Serial.print("     Sending to server: "); 
+  Serial.println(payload); 
+ 
+  WiFiClient client; 
+  HTTPClient http; 
+  String url = String("http://") + host + ":" + String(port) + apiPath; 
+ 
+  http.begin(client, url); 
+  http.addHeader("Content-Type", "application/json"); 
+  http.addHeader("API-Key", apiKey); 
+ 
+  int httpCode = http.POST(payload); 
+  Serial.printf("[HTTP POST] Code: %d\n", httpCode); 
+ 
+  String response = http.getString(); 
+  Serial.println("   Server response:"); 
+  Serial.println(response); 
+ 
+  http.end(); 
+} 
+ 
+//    NEW: Poll /latest and forward buzzer command to UNO 
+void fetchLatestAndTriggerBuzzer() { 
+  if (WiFi.status() != WL_CONNECTED) return; 
+ 
+  WiFiClient client; 
+  HTTPClient http; 
+  String url = String("http://") + host + ":" + String(port) + latestPath; 
+ 
+  http.begin(client, url); 
+  http.addHeader("API-Key", apiKey); 
+ 
+  int httpCode = http.GET(); 
+  if (httpCode == 200) { 
+    String response = http.getString(); 
+    Serial.println("   Latest response:"); 
+    Serial.println(response); 
+ 
+    StaticJsonDocument<512> doc; 
+    DeserializationError error = deserializeJson(doc, response); 
+    if (!error) { 
+      if (doc.containsKey("buzzer") && doc["buzzer"] == true) { 
+        Serial.println("       Triggering buzzer via UNO"); 
+        unoSerial.println("{\"buzzer\":true}"); 
+      } 
+    } else { 
+      Serial.println("  Failed to parse /latest response:"); 
+      Serial.println(error.c_str()); 
+    } 
+  } else { 
+    Serial.printf("  GET /latest failed, code: %d\n", httpCode); 
+  } 
+ 
+  http.end(); 
+}
