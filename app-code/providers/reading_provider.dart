@@ -1,4 +1,5 @@
 // File: lib/providers/reading_provider.dart
+// Updated to support both real and mock API services.
 
 import 'dart:async';
 import 'package:flutter/material.dart';
@@ -7,113 +8,64 @@ import '../models/rfid_log.dart';
 import '../services/api_service.dart';
 
 class ReadingProvider extends ChangeNotifier {
-  final ApiService _api = ApiService();
-
+  final ApiService _api; // Now accepts an ApiService instance
   Reading _latestReading = Reading.empty();
-  Reading get latestReading => _latestReading;
-
   final List<Reading> _recentReadings = [];
-  List<Reading> get recentReadings => _recentReadings;
-
-  List<Reading> _recentEnvLogs = [];
-  List<Reading> get recentEnvLogs => _recentEnvLogs;
-
   List<RfidLog> _recentRfidLogs = [];
-  List<RfidLog> get recentRfidLogs => _recentRfidLogs;
+  Timer? _pollingTimer;
+  DateTime? _lastAlarmTs;
 
-  Map<String, double> _thresholds = {
+  // Constructor to allow injecting the desired ApiService (real or mock)
+  ReadingProvider({ApiService? apiService}) : _api = apiService ?? ApiService();
+
+  Reading get latestReading => _latestReading;
+  List<Reading> get recentReadings => _recentReadings;
+  List<RfidLog> get recentRfidLogs => _recentRfidLogs;
+  DateTime? get lastAlarmTs => _lastAlarmTs;
+
+  final Map<String, double> _thresholds = {
     'temperature': 40.0,
     'humidity': 90.0,
     'gas': 500.0,
   };
   Map<String, double> get thresholds => _thresholds;
 
-  Timer? _pollingTimer;
-  DateTime _lastUpdated = DateTime.fromMillisecondsSinceEpoch(0);
-
-  DateTime? _lastAlarmTs;
-  DateTime? get lastAlarmTs => _lastAlarmTs;
-
-  // Starts periodic polling every 2 seconds
   void startPolling() {
     _pollingTimer?.cancel();
-    _fetchAndNotify();
-    pollingTimer = Timer.periodic(const Duration(seconds: 2), () {
-      _fetchAndNotify();
-    });
+    _fetchAndNotify(); // Fetch immediately on start
+    _pollingTimer = Timer.periodic(const Duration(seconds: 2), (_) => _fetchAndNotify());
   }
 
-  // Fetches latest reading and updates state
   Future<void> _fetchAndNotify() async {
     try {
+      // Use the injected API service to fetch data
       final reading = await _api.fetchLatestReading();
-      _latestReading = reading;
-      _updateRecentReadings(reading);
-      _lastUpdated = DateTime.now();
-
-      if (reading.alarm == true) {
-        if (_lastAlarmTs == null ||
-            _lastAlarmTs!.toIso8601String() != reading.timestamp.toIso8601String()) {
-          _lastAlarmTs = reading.timestamp;
-          notifyListeners(); // Trigger UI for alarm
-        }
-      }
-
-      _recentEnvLogs = await _api.fetchRecentEnvLogs();
       final rfidLogs = await _api.fetchRecentRfidLogs();
-      updateRecentRfidLogs(rfidLogs);
 
-      print('latestReading: $_latestReading');
-      print('Env logs: ${_recentEnvLogs.length}, RFID logs: ${_recentRfidLogs.length}');
+      _latestReading = reading;
+      _recentRfidLogs = rfidLogs;
+      _updateRecentReadings(reading);
+
+      if (reading.alarm && (_lastAlarmTs == null || _lastAlarmTs != reading.timestamp)) {
+        _lastAlarmTs = reading.timestamp;
+      }
     } catch (e) {
-      print('Error in _fetchAndNotify: $e');
+      print("Error fetching data: $e");
+      // You could add logic here to show an error state in the UI
     } finally {
-      notifyListeners(); // Always update UI
+      notifyListeners(); // Update the UI with new data or after an error
     }
   }
 
-  // Updates RFID logs and notifies listeners
-  void updateRecentRfidLogs(List<RfidLog> logs) {
-    _recentRfidLogs = logs;
-    notifyListeners();
-  }
-
-  // Inserts new reading and maintains recent list
   void _updateRecentReadings(Reading reading) {
     _recentReadings.insert(0, reading);
-    if (_recentReadings.length > 120) {
+    if (_recentReadings.length > 120) { // Keep only the last 2 minutes of data
       _recentReadings.removeLast();
     }
   }
 
-  // Stops polling when not needed
   void stopPolling() {
     _pollingTimer?.cancel();
-    _pollingTimer = null;
-  }
-
-  // Updates a specific threshold
-  void setThreshold(String key, double value) {
-    _thresholds[key] = value;
-    notifyListeners();
-  }
-
-  // Loads thresholds from storage or backend
-  void loadThresholds(Map<String, double> newThresholds) {
-    _thresholds = newThresholds;
-    notifyListeners();
-  }
-
-  // Checks if NodeMCU data is recent
-  bool get isNodeMcuConnected {
-    final diff = DateTime.now().difference(_latestReading.timestamp);
-    return diff.inSeconds < 5;
-  }
-
-  // Checks if app is actively receiving data
-  bool get isConnected {
-    final diff = DateTime.now().difference(_lastUpdated);
-    return diff.inSeconds < 5;
   }
 
   @override
