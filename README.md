@@ -44,7 +44,7 @@ Developed a comprehensive IoT ecosystem with three key components:
 
 ## 🏗️ Technical Architecture
 
-
+![image alt](https://github.com/Kshitij-Ekantikashya/smart-warehouse-iot-pm-case-study/blob/cc6a14eeb5928130e4d7b00cf03a3feef954e39b/images/Flowchart%20(1).jpg)
 
 
 ### Technology Stack
@@ -56,39 +56,7 @@ Developed a comprehensive IoT ecosystem with three key components:
 
 ## 📱 Flutter Project Structure
 
-```
-lib/
-├─ models/
-│   ├─ rfid_log.dart          # Inventory log data model
-│   └─ reading.dart           # Environmental sensor readings model
-│
-├─ providers/
-│   ├─ auth_provider.dart           # Authentication state management
-│   ├─ connectivity_provider.dart   # WiFi/NodeMCU connectivity tracking
-│   ├─ reading_provider.dart        # Real-time data polling & alerts
-│   └─ settings_provider.dart       # User preferences & thresholds
-│
-├─ screens/
-│   ├─ dashboard_screen.dart   # Main monitoring dashboard
-│   ├─ login_screen.dart       # User authentication
-│   └─ splash_screen.dart      # App initialization & routing
-│
-├─ services/
-│   ├─ api_service.dart        # HTTP API communication
-│   └─ mock_api_service.dart   # Demo data simulation
-│
-├─ theme/
-│   └─ colors.dart            # Centralized dark theme palette
-│
-├─ widgets/
-│   ├─ kpi_tile.dart           # Customizable KPI display tiles
-│   ├─ rfid_log_table.dart     # Recent inventory movement table
-│   ├─ stack_space_donut.dart  # Warehouse capacity visualization
-│   ├─ system_status_tiles.dart # Device connectivity & time display
-│   └─ trend_line_chart.dart   # Environmental data trends
-│
-└─ main.dart                   # App entry point with demo mode toggle
-```
+![image alt]()
 
 ## 🔧 Setup & Installation
 
