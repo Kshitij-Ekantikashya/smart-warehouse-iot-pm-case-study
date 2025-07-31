@@ -44,16 +44,8 @@ Developed a comprehensive IoT ecosystem with three key components:
 
 ## 🏗️ Technical Architecture
 
-```
-┌─────────────────┐    ┌──────────────┐    ┌─────────────────┐
-│   Hardware      │    │   Backend    │    │   Frontend      │
-│                 │    │              │    │                 │
-│ • Arduino Uno   │───▶│ • Node.js    │───▶│ • Flutter       │
-│ • NodeMCU       │    │ • Express    │    │ • Provider      │
-│ • RFID Scanner  │    │ • Real-time  │    │ • Responsive    │
-│ • Sensors       │    │   API        │    │ • Cross-platform│
-└─────────────────┘    └──────────────┘    └─────────────────┘
-```
+
+
 
 ### Technology Stack
 - **Frontend**: Flutter (iOS/Android/Web)
