@@ -56,7 +56,7 @@ Developed a comprehensive IoT ecosystem with three key components:
 
 ## 📱 Flutter Project Structure
 
-![image alt]()
+![image alt](https://github.com/Kshitij-Ekantikashya/smart-warehouse-iot-pm-case-study/blob/7a3abfbb9880952278ccd4087aa1759dd968c696/images/file%20structure.png)
 
 ## 🔧 Setup & Installation
 
