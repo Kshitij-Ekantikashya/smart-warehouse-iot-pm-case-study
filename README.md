@@ -17,9 +17,9 @@ An end-to-end IoT solution for warehouse management that leverages real-time sen
 
 ## 🚀 Live Demo
 
-**[View Live Dashboard](https://yourusername.github.io/smart-warehouse-iot-pm-case-study)** *(Replace with your actual GitHub Pages URL)*
+**[View Live Dashboard](https://kshitij-ekantikashya.github.io/smart-warehouse-mock-demo/)**
 
-*Note: Demo runs with simulated data since hardware is not permanently connected*
+*Note: Demo runs with simulated data since hardware is not permanently connected and you can put anything as credentials to login in the demo mode.*
 
 ## 📋 Product Management Approach
 
@@ -188,4 +188,4 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 **📝 Note**: This repository demonstrates a complete product development lifecycle from ideation to deployment. The project showcases both technical implementation skills and product management capabilities, making it suitable for portfolio presentation and technical interviews.
 
-*For a detailed product management case study writeup, visit: [Link to your blog post or Medium article]*
+*For a detailed product management case study writeup, visit: [blog comming up]
