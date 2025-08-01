@@ -106,7 +106,8 @@ dependencies:
 ## 📊 Features & Functionality
 
 ### Real-time Monitoring Dashboard
-![Dashboard Screenshot](screenshots/dashboard.png) *(Add actual screenshot)*
+![image alt](https://github.com/Kshitij-Ekantikashya/smart-warehouse-iot-pm-case-study/blob/a0ef621c5ca83fb6180abae376f54ff67e54e773/images/login%20screen.png)
+![image alt](https://github.com/Kshitij-Ekantikashya/smart-warehouse-iot-pm-case-study/blob/a0ef621c5ca83fb6180abae376f54ff67e54e773/images/main%20dash.jpg)
 
 - **Environmental KPIs**: Temperature, humidity, gas levels
 - **Warehouse Capacity**: Visual donut chart showing space utilization
@@ -171,9 +172,8 @@ dependencies:
 
 This project serves as a product management case study. For questions about implementation details or collaboration opportunities, please reach out via:
 
-- **LinkedIn**: [Your LinkedIn Profile]
-- **Email**: your.email@example.com
-- **Portfolio**: [Your Portfolio Website]
+- **LinkedIn**: https://www.linkedin.com/in/kshitij-ranjan21
+- **Email**: kshitijranjan30317@gmail.com
 
 ## 📄 License
 
@@ -181,10 +181,8 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Warehouse operations team for requirements gathering and testing
-- Hardware engineering team for sensor integration
-- Backend development team for API design
-- UI/UX feedback from end users
+- HOD for guidance and mentoring.
+- UI/UX feedback from end users and peers
 
 ---
 
