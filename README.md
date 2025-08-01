@@ -172,6 +172,7 @@ dependencies:
 
 This project serves as a product management case study. For questions about implementation details or collaboration opportunities, please reach out via:
 
+- **Medium Article**: [Read](https://medium.com/@kshitijranjan30316/integrated-smart-warehouse-platform-from-student-concept-to-scalable-sme-solution-70806cee3947?source=friends_link&sk=5a36b1b960ea6648f63c7d532692a874)
 - **LinkedIn**: https://www.linkedin.com/in/kshitij-ranjan21
 - **Email**: kshitijranjan30317@gmail.com
 
